@@ -41,8 +41,10 @@ dig-rpc-protocol = { version = "0.3" }
 # import and so DigPeer can read the local BLS identity for sealing.
 dig-tls = { version = "0.1" }
 
-# Byte-deterministic Chia-Streamable DID/G1 wire types (Bytes32 identity id) the seal uses.
+# Byte-deterministic Chia-Streamable DID/G1 wire types (Bytes32 identity id) the seal uses, plus the
+# Streamable to_bytes/from_bytes trait for the sealed dig-message envelope.
 chia-protocol = "0.26"
+chia-traits = "0.26"
 
 # Async runtime + stream I/O for the RPC framing over the mux.
 tokio = { version = "1", features = ["io-util", "rt", "macros", "time", "sync"] }

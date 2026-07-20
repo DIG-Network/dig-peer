@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Format / Clippy / Test / Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Check clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Check documentation
+        run: cargo doc --no-deps
+
+  coverage:
+    name: Coverage (>=80% lines)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Unit + integration coverage, CI-gated at >=80% lines (ecosystem standard #157), run through
+      # nextest (not a separate `cargo test`) so llvm-cov instruments the SAME nextest execution —
+      # running nextest and llvm-cov as separate steps collects ZERO coverage and fails this gate
+      # (#488). `--retries 2` retries a failing test up to 2x and reports it as flaky
+      # (failed-then-passed) rather than a hard CI failure, surfacing flaky tests in the run output
+      # (#489) while coverage collection stays intact.
+      #
+      # Every module — the embedded DigNetwork CA loaders, the per-peer node-cert generation, the
+      # rustls mutual-auth verifiers (chain-to-CA + peer_id pin + BLS binding), and the peer_id
+      # derivation — is exercised in-process with no real network, so the whole crate is counted.
+      - name: Run tests with coverage (nextest, retries 2, gate >=80% lines)
+        run: >-
+          cargo llvm-cov nextest --all
+          --retries 2
+          --fail-under-lines 80
+          --lcov --output-path lcov.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-coverage
+          path: lcov.info
+          if-no-files-found: error
