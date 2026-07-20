@@ -268,7 +268,9 @@ async fn methods_round_trips() {
     let server = spawn_test_server(identity_key("srv/methods")).await;
     let client_node = Arc::new(NodeCert::generate_signed(&identity_key("cli/methods")).unwrap());
     let target = PeerTarget::with_addr(server.peer_id, server.addr, "DIG_TESTNET");
-    let mut peer = DigPeer::connect(&target, &client_node).await.expect("connect");
+    let mut peer = DigPeer::connect(&target, &client_node)
+        .await
+        .expect("connect");
     let methods = peer.methods().await.expect("methods rpc");
     assert!(methods.methods.contains(&"dig.health".to_string()));
     peer.disconnect().await;
