@@ -75,6 +75,26 @@ A JSON-RPC error envelope MUST map to `DigPeerError::Rpc` carrying the peer's `R
 body that is neither `result` nor `error` MUST be a `DigPeerError::Codec` failure, never a silent
 success.
 
+### 3.4 Raw-stream escape hatch (`open_stream`, unsealed)
+
+`DigPeer::open_stream()` MUST open ONE fresh multiplexed logical stream over the
+already-established mTLS `PeerConnection` (the same `dig_nat::PeerConnection::open_stream` path §3.1
+rides) and return it as an opaque `dig_nat::PeerStream` (re-exported from the crate root) for the
+caller to read/write directly. It performs NO framing, NO JSON encoding, and NO sealing — the bytes on
+the wire are entirely the caller's own wire format.
+
+- **Purpose.** It is the escape hatch for a consumer that carries its OWN wire framing rather than
+  dig-peer's typed RPC methods — e.g. a same-level (L20) crate such as `dig-dht`, whose `DhtRequest`
+  dig-peer MUST NOT typed-wrap (a same-level dependency is forbidden by the reference-down-only crate
+  hierarchy). The caller owns `encode`/`decode`; dig-peer sees opaque bytes.
+- **Unsealed, by design.** The stream rides the authenticated mTLS connection with NO auth bypass, but
+  is NOT end-to-end sealed — consistent with `fetch_range` / content, DISTINCT from the sealed directed
+  methods (§4). A caller placing recipient-specific secret content on this stream is responsible for
+  its own §5.4 sealing; dig-peer does not seal it. Directed/secret messages MUST use the sealed typed
+  methods, never this escape hatch.
+- **Lifecycle.** MUST fail `DigPeerError::InvalidState` after `disconnect` (§5); MUST surface a stream
+  failure as `DigPeerError::Io`.
+
 ## 4. The §5.4 directed-message seal
 
 A directed RPC MUST be end-to-end sealed to the peer's BLS-G1 identity, layered ON TOP of mTLS, so an

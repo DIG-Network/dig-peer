@@ -324,6 +324,60 @@ async fn wrong_expected_peer_id_is_rejected() {
     );
 }
 
+/// **Proves:** `DigPeer::open_stream()` gives a caller a generic raw mux stream over the
+/// authenticated mTLS connection that round-trips ARBITRARY caller-owned bytes byte-identically —
+/// the unsealed escape hatch a consumer with its own wire framing (e.g. dig-dht's `DhtRequest`) uses.
+/// The server here is a blind echo (it does no JSON/RPC parsing), proving the stream is opaque bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn open_stream_round_trips_arbitrary_caller_owned_bytes() {
+    let server = spawn_echo_server(identity_key("srv/raw")).await;
+    let client_node = Arc::new(NodeCert::generate_signed(&identity_key("cli/raw")).unwrap());
+
+    let target = PeerTarget::with_addr(server.peer_id, server.addr, "DIG_TESTNET");
+    let mut peer = DigPeer::connect(&target, &client_node)
+        .await
+        .expect("connect");
+
+    // A caller-owned frame that is NOT valid JSON — it must survive as opaque bytes.
+    let frame: &[u8] = &[0x00, 0x01, 0xFF, 0xFE, 0x42, 0x00, 0x99];
+    let mut stream = peer.open_stream().await.expect("open raw stream");
+    write_framed(&mut stream, frame).await.expect("write frame");
+    let echoed = read_framed(&mut stream).await.expect("read echoed frame");
+    assert_eq!(
+        echoed, frame,
+        "raw stream must round-trip bytes byte-identically"
+    );
+
+    peer.disconnect().await;
+}
+
+/// A minimal serving node that BLINDLY echoes each framed body back on the same mux stream — it does
+/// no RPC/JSON parsing, so it proves `open_stream` carries opaque caller-owned bytes.
+async fn spawn_echo_server(server_key: SecretKey) -> TestServer {
+    let server_node = Arc::new(NodeCert::generate_signed(&server_key).expect("server cert"));
+    let peer_id = server_node.peer_id();
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    tokio::spawn(async move {
+        let server_tls =
+            dig_tls::server_config(&server_node, BindingPolicy::Opportunistic).expect("server cfg");
+        let acceptor = TlsAcceptor::from(server_tls.config.clone());
+        let (tcp, _) = listener.accept().await.expect("accept tcp");
+        let tls = acceptor.accept(tcp).await.expect("accept tls");
+        let mut session = PeerSession::server(tls);
+        while let Some(mut stream) = session.accept_stream().await {
+            let body = match read_framed(&mut stream).await {
+                Ok(b) => b,
+                Err(_) => break,
+            };
+            write_framed(&mut stream, &body).await.expect("echo body");
+        }
+    });
+
+    TestServer { addr, peer_id }
+}
+
 /// **Proves:** after `disconnect`, further RPCs fail with `InvalidState` — no use-after-close.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_after_disconnect_is_invalid_state() {
