@@ -66,7 +66,7 @@ use dig_rpc_protocol::{JsonRpcResponse, Method};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-pub use dig_nat::{AvailabilityItem, AvailabilityResponse, PeerTarget, RangeRequest};
+pub use dig_nat::{AvailabilityItem, AvailabilityResponse, PeerStream, PeerTarget, RangeRequest};
 pub use dig_tls::{NodeCert, PeerId};
 
 pub use error::{DigPeerError, Result};
@@ -260,6 +260,29 @@ impl DigPeer {
     pub async fn fetch_range(&mut self, req: &RangeRequest) -> Result<dig_nat::PeerStream> {
         self.ensure_usable()?;
         Ok(self.conn.open_range_stream(req).await?)
+    }
+
+    /// Open a generic **raw** multiplexed stream over the (already-established, mTLS-authenticated)
+    /// connection and hand it to the caller — the **unsealed raw-stream escape hatch** for a consumer
+    /// that carries its OWN wire framing rather than dig-peer's typed RPC methods.
+    ///
+    /// This is the same authenticated mux path [`Self::fetch_range`] and the internal RPC calls ride;
+    /// it performs NO framing, NO JSON, and NO sealing — the bytes on the wire are entirely the
+    /// caller's. It exists because a same-level (L20) consumer (e.g. `dig-dht`, whose `DhtRequest`
+    /// dig-peer cannot typed-wrap without an illegal same-level dependency) must encode/decode its own
+    /// frame over the authenticated connection.
+    ///
+    /// **Unsealed, by design.** Like content/[`Self::fetch_range`], the stream rides mTLS but is NOT
+    /// end-to-end sealed. Directed/secret messages MUST use the sealed typed methods
+    /// ([`Self::get_network_info`], [`Self::get_peers`], [`Self::announce`]) — never this escape hatch.
+    /// A caller that puts recipient-specific secret content on this stream is responsible for its own
+    /// §5.4 sealing; dig-peer does not seal it.
+    ///
+    /// # Errors
+    /// [`DigPeerError::Io`] on stream failure; [`DigPeerError::InvalidState`] after disconnect.
+    pub async fn open_stream(&mut self) -> Result<PeerStream> {
+        self.ensure_usable()?;
+        Ok(self.conn.open_stream().await?)
     }
 
     /// Cleanly tear down the connection. Once closed, RPCs fail with [`DigPeerError::InvalidState`].
