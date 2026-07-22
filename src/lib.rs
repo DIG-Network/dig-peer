@@ -137,6 +137,7 @@ impl DigPeer {
         runtime: &NatRuntime,
     ) -> Result<Self> {
         let conn = connect_with_runtime(peer, tls, config, runtime).await?;
+        verify_pinned_peer_id(peer.peer_id, conn.peer_id)?;
         Ok(Self::from_connection(tls.peer_id(), conn))
     }
 
@@ -145,6 +146,12 @@ impl DigPeer {
     ///
     /// Useful for a serving node that accepted an inbound dig-nat connection and wants the typed-RPC
     /// client surface over it, without re-dialing.
+    ///
+    /// Unlike [`Self::connect_with_runtime`], this does NOT run the [`verify_pinned_peer_id`]
+    /// defense-in-depth check: an *accepted inbound* connection has no caller-pinned target to compare
+    /// against — its remote `peer_id` is *captured* from the verified handshake (`conn.peer_id`),
+    /// not *pinned* by this node. The mTLS handshake still authenticated that identity; there is simply
+    /// no expected value to assert equality against.
     #[must_use]
     pub fn from_connection(local_peer_id: NatPeerId, conn: PeerConnection) -> Self {
         Self {
@@ -378,12 +385,33 @@ impl DigPeer {
     }
 
     /// Reject an operation if the connection is not usable (post-disconnect).
+    ///
+    /// Defensive guard. Today the [`PeerState::Closed`] branch is effectively **unreachable through the
+    /// public API**: the only transition to `Closed` is [`Self::disconnect`], which consumes `self`, so
+    /// a caller cannot hold a `DigPeer` and issue an RPC after closing it (use-after-close is prevented
+    /// at the type level, not merely by this runtime check). The branch is retained as an explicit
+    /// invariant so that a future non-consuming close / opportunistic re-dial (a documented follow-up)
+    /// stays fail-closed by construction rather than by accident.
     fn ensure_usable(&self) -> Result<()> {
         if self.state.is_usable() {
             Ok(())
         } else {
             Err(DigPeerError::InvalidState(self.state))
         }
+    }
+}
+
+/// Verify the connection's authenticated remote `peer_id` matches the one the caller pinned in the
+/// [`PeerTarget`]. `dig-nat`/`dig-tls` already enforce this pin during the mTLS handshake (a peer that
+/// presents the wrong `peer_id` is rejected before a connection is ever returned), so this check is
+/// **defense-in-depth**: if a future transport regression returned a connection to a different peer
+/// than requested, dig-peer fails closed with [`DigPeerError::PeerIdMismatch`] rather than silently
+/// handing back the wrong peer.
+fn verify_pinned_peer_id(expected: PeerId, actual: PeerId) -> Result<()> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(DigPeerError::PeerIdMismatch { expected, actual })
     }
 }
 
@@ -420,5 +448,28 @@ mod tests {
     fn decode_result_rejects_a_bodyless_response() {
         let result: Result<serde_json::Value> = DigPeer::decode_result(b"garbage");
         assert!(matches!(result, Err(DigPeerError::Codec(_))));
+    }
+
+    /// **Proves:** the defense-in-depth pin check accepts a connection whose `peer_id` matches the
+    /// pinned target.
+    #[test]
+    fn verify_pinned_peer_id_accepts_a_match() {
+        let id = PeerId::from_bytes([0x11; 32]);
+        assert!(verify_pinned_peer_id(id, id).is_ok());
+    }
+
+    /// **Proves:** the defense-in-depth pin check fails CLOSED (`PeerIdMismatch`) when the answering
+    /// peer's `peer_id` differs from the pinned target — dig-peer never hands back the wrong peer even
+    /// if the transport's own pin regressed.
+    /// **Catches:** a regression that dropped the belt-and-suspenders check and trusted the transport
+    /// to have upheld the pin (the check silently accepting any peer).
+    #[test]
+    fn verify_pinned_peer_id_rejects_a_mismatch() {
+        let expected = PeerId::from_bytes([0x11; 32]);
+        let actual = PeerId::from_bytes([0x22; 32]);
+        assert!(matches!(
+            verify_pinned_peer_id(expected, actual),
+            Err(DigPeerError::PeerIdMismatch { .. })
+        ));
     }
 }

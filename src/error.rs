@@ -59,6 +59,18 @@ pub enum DigPeerError {
     #[error("sealed response did not correlate with the request")]
     Misdelivered,
 
+    /// The peer that answered the (already `peer_id`-pinned) handshake presented a `peer_id` that does
+    /// NOT match the one the caller targeted. `dig-nat` / `dig-tls` already enforce the pin during the
+    /// mTLS handshake, so reaching this is a **defense-in-depth** backstop: dig-peer refuses to hand
+    /// back a connection to the wrong peer rather than trust that the transport upheld its contract.
+    #[error("connected peer_id {actual:?} does not match the pinned target {expected:?}")]
+    PeerIdMismatch {
+        /// The `peer_id` the caller pinned via `PeerTarget`.
+        expected: crate::PeerId,
+        /// The `peer_id` the answering peer actually presented.
+        actual: crate::PeerId,
+    },
+
     /// A response body could not be (de)serialized into the expected typed shape.
     #[error("could not (de)serialize an RPC payload: {0}")]
     Codec(String),
