@@ -69,6 +69,15 @@ before allocation.
 - **Directed (sealed §5.4):** `dig.getNetworkInfo`, `dig.getPeers`, `dig.announce`. These carry
   peer-specific content and MUST be sealed to the peer's `peer_bls_pub`.
 
+**Metadata-privacy note (read tier).** On the **relayed** tier, a TLS-terminating relay forwards the
+unsealed public-read calls, so it CAN observe *which* public content ids a client requests (the
+`getAvailability` items and the byte-range `store_id`/`root_hash`). This is a metadata-privacy
+property, NOT a §5.4 payload-confidentiality break: the requested ids are public, by-nature-public,
+merkle-verified content references — the §5.4 seal exists to protect recipient-specific *directed*
+payloads (§4), and these read calls carry none. The unsealed exemption is therefore deliberate
+(latency, and the ids are already public); a caller that needs request-pattern privacy routes reads
+over a direct or onion tier (CLAUDE.md §5.4 sensible-scope exemption; NC-4 onion default).
+
 ### 3.3 Response decoding
 
 A JSON-RPC error envelope MUST map to `DigPeerError::Rpc` carrying the peer's `RpcError` verbatim. A

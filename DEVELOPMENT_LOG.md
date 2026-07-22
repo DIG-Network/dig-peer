@@ -26,3 +26,11 @@ public). Reaching peer X requires supplying X's `peer_id` so the dig-tls client 
 `getAvailability` + byte-range fetch carry public-by-nature, merkle-verified content addressed to
 everyone, so they ride mTLS unsealed (the §5.4 sensible-scope exemption) and delegate straight to the
 dig-nat mux primitives. Only peer-specific control RPCs (getNetworkInfo/getPeers/announce) are sealed.
+
+## Caret on 0.x locks the MINOR — a dep bump is deliberate, not automatic
+`dig-nat = "0.7"` is `^0.7` = `>=0.7.0, <0.8.0`, so it does NOT float up to dig-nat 0.10; likewise
+`dig-tls = "0.1"` stays on 0.1.x. dig-peer 0.3.0 therefore kept building against the OLD consistent
+set (dig-nat 0.7 + dig-tls 0.1) even after dig-nat 0.10 (finished connect ladder, #1422) and dig-tls
+0.3 (SPKI verifier) shipped. Adopting the newer security-critical transport is a deliberate,
+gated migration (this branch), not something cargo does on its own — and it must be done before the
+DigPeer consumer cascade (#1283) pins the stale set.
