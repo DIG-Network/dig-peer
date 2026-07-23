@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -28,7 +28,7 @@ categories = ["network-programming", "api-bindings"]
 [dependencies]
 # The transport: one connect() over the full direct→relay NAT-traversal ladder, returning a verified
 # mTLS PeerConnection. dig-peer wraps this — it never hand-rolls dialing, mTLS, or peer_id pinning.
-dig-nat = { version = "0.10" }
+dig-nat = { version = "0.11" }
 # The §5.4/#1075 recipient-seal: seal_message/open_message (DHKEM-over-G1 + BLS-G2 signature +
 # anti-replay). DigPeer applies it per directed RPC to the peer's captured BLS-G1 key; fail-closed.
 dig-message = { version = "0.5" }
