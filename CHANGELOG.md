@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.6.0] - 2026-07-26
+
+### Chores
+- **deps:** Bump dig-nat 0.13 + dig-rpc-protocol 0.6 — release 0.6.0 (cascade #1656) (#6)
+
 ## [0.5.0] - 2026-07-26
 
 ### Features
