@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -35,7 +35,7 @@ dig-message = { version = "0.5" }
 # The canonical RPC wire contract: the JSON-RPC 2.0 envelope, the method catalogue, the typed
 # request/response types, and the error taxonomy. DigPeer exposes typed clients for these — never a
 # hand-rolled wire type.
-dig-rpc-protocol = { version = "0.3" }
+dig-rpc-protocol = { version = "0.5" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
 # import and so DigPeer can read the local BLS identity for sealing.
@@ -60,6 +60,9 @@ thiserror = "1"
 # Loopback e2e: a real dig-tls mTLS server + dig-nat PeerSession the DigPeer client connects to.
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "test-util"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+# Builds the module-pull test fixture's chunk/blob hashes, so the loopback descriptor is the SAME
+# content-addressed shape the real puller attributes ranges against (never a hand-written digest).
+sha2 = "0.10"
 
 [lib]
 doctest = true

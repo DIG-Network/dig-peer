@@ -62,7 +62,8 @@ before allocation.
 
 ### 3.2 Method classification
 
-- **Public-read (unsealed):** `dig.health`, `dig.methods`, `dig.getAvailability`, byte-range fetch.
+- **Public-read (unsealed):** `dig.health`, `dig.methods`, `dig.getAvailability`, byte-range fetch,
+  `dig.getModuleInfo`, `dig.fetchModuleRange` (§3.5).
   These carry public-by-nature, merkle-verified content and ride mTLS unsealed (§5.4 sensible-scope
   exemption). `getAvailability` and range fetch delegate to the `dig-nat` mux primitives
   (`query_availability` / `open_range_stream`).
@@ -103,6 +104,27 @@ the wire are entirely the caller's own wire format.
   methods, never this escape hatch.
 - **Lifecycle.** MUST fail `DigPeerError::InvalidState` after `disconnect` (§5); MUST surface a stream
   failure as `DigPeerError::Io`.
+
+### 3.5 The whole-`.dig`-module pull (`getModuleInfo` / `fetchModuleRange`)
+
+These two public-read methods let a caller pull an ENTIRE `.dig` module for a `(store_id, root)`
+generation, so a node that read one resource from a peer can become a complete resharer of the whole
+capsule.
+
+- **`get_module_info(&GetModuleInfoParams) -> ModuleInfo`** MUST be an unsealed request/response call
+  (§3.1 framing) returning the `dig_rpc_protocol::types::ModuleInfo` descriptor verbatim.
+- **`fetch_module_range(&FetchModuleRangeParams) -> PeerStream`** MUST write a JSON-RPC request naming
+  `dig.fetchModuleRange` on ONE fresh mux stream and return that stream for the caller to read
+  `dig_nat::RangeFrame`s from. The method NAME is the server's routing discriminator: a request shape
+  alone cannot express "answer me with a frame stream". The caller MUST read frames until one reports
+  `complete` — a holder MAY answer at its own, narrower frame granularity, so one request MAY yield
+  many frames, and a caller that stops after the first truncates the window.
+
+**The descriptor is NOT a trust anchor (MUST).** `ModuleInfo` is one peer's declaration. It plans the
+pull and gives per-chunk source attribution; it does NOT establish authenticity. A caller MUST bind the
+fully-assembled module to its on-chain `(store_id, root)` anchor before admitting, serving, or
+announcing it (NC-9). A caller that admits a module on the descriptor alone reshares exactly what the
+peer chose to describe.
 
 ## 4. The §5.4 directed-message seal
 
