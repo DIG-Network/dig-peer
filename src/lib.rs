@@ -60,7 +60,8 @@ use std::sync::Arc;
 use dig_nat::{connect_with_runtime, NatConfig, NatRuntime, PeerConnection, PeerId as NatPeerId};
 use dig_rpc_protocol::envelope::{JsonRpcRequest, RequestId};
 use dig_rpc_protocol::types::{
-    AnnounceAck, AnnounceParams, Health, Methods, NetworkInfo, PeersList,
+    AnnounceAck, AnnounceParams, FetchModuleRangeParams, GetModuleInfoParams, Health, Methods,
+    ModuleInfo, NetworkInfo, PeersList,
 };
 use dig_rpc_protocol::{JsonRpcResponse, Method};
 use serde::de::DeserializeOwned;
@@ -267,6 +268,49 @@ impl DigPeer {
     pub async fn fetch_range(&mut self, req: &RangeRequest) -> Result<dig_nat::PeerStream> {
         self.ensure_usable()?;
         Ok(self.conn.open_range_stream(req).await?)
+    }
+
+    /// `dig.getModuleInfo` — the transfer descriptor for a whole `.dig` module (public merkle-verified
+    /// content presence, unsealed §5.4 exemption).
+    ///
+    /// The returned [`ModuleInfo`] is the peer's DECLARATION, never a trust anchor: it plans the pull
+    /// and gives per-chunk attribution, but the puller's authority is the whole-blob hash plus the
+    /// chain-anchor gate it runs on the assembled module (NC-9). A caller that admits a module on this
+    /// descriptor alone would reshare whatever the peer chose to describe.
+    ///
+    /// # Errors
+    /// [`DigPeerError::Rpc`] if the peer does not hold the module; [`DigPeerError::Io`] on stream
+    /// failure; [`DigPeerError::InvalidState`] after disconnect.
+    pub async fn get_module_info(&mut self, params: &GetModuleInfoParams) -> Result<ModuleInfo> {
+        self.call_public(Method::GetModuleInfo, params).await
+    }
+
+    /// `dig.fetchModuleRange` — open a byte-range stream over the whole `.dig` module blob for
+    /// `(store_id, root)` (public merkle-verified content, unsealed §5.4 exemption).
+    ///
+    /// Returns the stream the caller reads [`dig_nat::RangeFrame`]s from until a frame reports
+    /// `complete`. A holder legitimately answers at its OWN frame granularity, so one request can
+    /// yield MANY frames — a caller that reads only the first truncates the window.
+    ///
+    /// This mirrors [`Self::fetch_range`] but names the WHOLE module rather than one resource inside
+    /// it, and so carries no `retrieval_key`: the whole-`.dig` pull is what lets a node that read one
+    /// resource become a complete resharer of the capsule (#1576).
+    ///
+    /// # Errors
+    /// [`DigPeerError::Io`] on stream failure; [`DigPeerError::InvalidState`] after disconnect.
+    pub async fn fetch_module_range(
+        &mut self,
+        params: &FetchModuleRangeParams,
+    ) -> Result<PeerStream> {
+        self.ensure_usable()?;
+        // A JSON-RPC-named request whose RESPONSE is a frame stream rather than one envelope, so it
+        // rides the raw stream rather than `call_public`. The method name is the discriminator the
+        // server routes on — the request shape alone cannot say "stream me frames".
+        let request = self.build_request(Method::FetchModuleRange, params)?;
+        let body = rpc::to_json(&request)?;
+        let mut stream = self.conn.open_stream().await?;
+        rpc::write_framed(&mut stream, &body).await?;
+        Ok(stream)
     }
 
     /// Open a generic **raw** multiplexed stream over the (already-established, mTLS-authenticated)

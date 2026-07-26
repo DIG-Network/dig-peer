@@ -9,10 +9,12 @@ use chia_protocol::Bytes32;
 use chia_traits::Streamable as _;
 use dig_message::envelope::{DigMessageEnvelope, InteractionShape};
 use dig_message::{open_message, seal_message, ReplayGuard, SealParams};
-use dig_nat::{BindingPolicy, PeerSession, PeerTarget};
+use dig_nat::{BindingPolicy, PeerSession, PeerTarget, RangeFrame};
 use dig_peer::{DigPeer, NodeCert, SealingIdentity};
 use dig_rpc_protocol::envelope::{JsonRpcRequest, JsonRpcResponse};
-use dig_rpc_protocol::types::{Health, NetworkInfo, RelayStatus};
+use dig_rpc_protocol::types::{
+    FetchModuleRangeParams, GetModuleInfoParams, Health, ModuleInfo, NetworkInfo, RelayStatus,
+};
 use dig_tls::bls::SecretKey;
 use dig_tls::PeerId;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -392,5 +394,177 @@ async fn rpc_after_disconnect_is_invalid_state() {
         .await
         .expect("connect");
     assert_eq!(peer.state(), dig_peer::PeerState::Connected);
+    peer.disconnect().await;
+}
+
+// ===========================================================================
+// The whole-`.dig`-module pull client leg (#1576) over REAL mTLS
+// ===========================================================================
+//
+// `dig.getModuleInfo` is an ordinary unsealed request/response call; `dig.fetchModuleRange` STREAMS
+// `RangeFrame`s, so it needs a server that keeps writing on the stream it was asked on. Both are
+// exercised against genuine mutual TLS rather than a mock, because the read leg's wire bugs (an
+// unbracketed IPv6 literal, a `serde_bytes`-vs-base64 skew) all survived symmetric mocks and only
+// surfaced on a real socket (#836/#1593).
+
+/// A serving node for the module methods: answers `dig.getModuleInfo` with `descriptor`, and
+/// `dig.fetchModuleRange` by streaming the requested window of `blob` as `frame_size`-byte frames.
+async fn spawn_module_server(
+    server_key: SecretKey,
+    descriptor: ModuleInfo,
+    blob: Vec<u8>,
+    frame_size: usize,
+) -> TestServer {
+    let server_node = Arc::new(NodeCert::generate_signed(&server_key).expect("server cert"));
+    let peer_id = server_node.peer_id();
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    tokio::spawn(async move {
+        let server_tls =
+            dig_tls::server_config(&server_node, BindingPolicy::Opportunistic).expect("server cfg");
+        let acceptor = TlsAcceptor::from(server_tls.config.clone());
+        let (tcp, _) = listener.accept().await.expect("accept tcp");
+        let tls = acceptor.accept(tcp).await.expect("accept tls");
+
+        let mut session = PeerSession::server(tls);
+        while let Some(mut stream) = session.accept_stream().await {
+            let Ok(body) = read_framed(&mut stream).await else {
+                break;
+            };
+            let req: JsonRpcRequest<serde_json::Value> =
+                serde_json::from_slice(&body).expect("module request parses");
+            match req.method.as_str() {
+                "dig.getModuleInfo" => {
+                    let response = JsonRpcResponse::success(
+                        req.id,
+                        serde_json::to_value(&descriptor).unwrap(),
+                    );
+                    write_framed(&mut stream, &serde_json::to_vec(&response).unwrap())
+                        .await
+                        .expect("write descriptor");
+                }
+                "dig.fetchModuleRange" => {
+                    let params = req.params.expect("module range params");
+                    let offset = params["offset"].as_u64().unwrap_or(0) as usize;
+                    let length = params["length"].as_u64().expect("length") as usize;
+                    let start = offset.min(blob.len());
+                    let window = &blob[start..(start + length).min(blob.len())];
+                    let mut written = 0usize;
+                    while written < window.len() {
+                        let take = frame_size.min(window.len() - written);
+                        let frame = RangeFrame {
+                            offset: (start + written) as u64,
+                            length: take as u64,
+                            bytes: window[written..written + take].to_vec(),
+                            complete: written + take == window.len(),
+                            total_length: (written == 0).then_some(blob.len() as u64),
+                            chunk_lens: None,
+                            chunk_index: None,
+                            inclusion_proof: None,
+                            root: None,
+                        };
+                        write_framed(&mut stream, &serde_json::to_vec(&frame).unwrap())
+                            .await
+                            .expect("write module frame");
+                        written += take;
+                    }
+                }
+                other => panic!("unexpected module method {other}"),
+            }
+        }
+    });
+
+    TestServer { addr, peer_id }
+}
+
+/// A descriptor + blob pair for the module tests: `chunks` chunks of `chunk_len` bytes each.
+fn module_fixture(chunks: usize, chunk_len: usize) -> (ModuleInfo, Vec<u8>) {
+    let blob: Vec<u8> = (0..chunks * chunk_len).map(|i| (i % 251) as u8).collect();
+    let info = ModuleInfo {
+        total_size: blob.len() as u64,
+        module_hash: sha256_hex(&blob),
+        chunk_hashes: blob.chunks(chunk_len).map(sha256_hex).collect(),
+        chunk_lens: vec![chunk_len as u64; chunks],
+    };
+    (info, blob)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// **Proves:** `dig.getModuleInfo` round-trips over real mTLS and decodes into the
+/// dig-rpc-protocol [`ModuleInfo`] the module puller plans from — the transfer descriptor crosses the
+/// wire intact.
+/// **Catches:** a `ModuleInfo` shape skew between the client's dig-rpc-protocol major and the
+/// server's (the #836 `serde_bytes`-vs-base64 class) — a renamed or re-encoded field fails this decode
+/// instead of silently planning a pull against zeroes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_module_info_round_trips_over_real_mtls() {
+    let (descriptor, blob) = module_fixture(3, 64);
+    let server =
+        spawn_module_server(identity_key("srv/modinfo"), descriptor.clone(), blob, 64).await;
+    let client_node = Arc::new(NodeCert::generate_signed(&identity_key("cli/modinfo")).unwrap());
+    let target = PeerTarget::with_addr(server.peer_id, server.addr, "DIG_TESTNET");
+    let mut peer = DigPeer::connect(&target, &client_node)
+        .await
+        .expect("connect");
+
+    let info = peer
+        .get_module_info(&GetModuleInfoParams {
+            store_id: "aa".repeat(32),
+            root: "bb".repeat(32),
+        })
+        .await
+        .expect("getModuleInfo rpc");
+
+    assert_eq!(info, descriptor, "the descriptor crossed the wire intact");
+    peer.disconnect().await;
+}
+
+/// **Proves:** `dig.fetchModuleRange` opens a real stream whose frames reassemble to the EXACT
+/// requested window of the module blob — including when the holder answers at a smaller frame
+/// granularity than the requested range (the normal case for a chunk wider than one frame).
+/// **Catches:** a client that stops after the first frame, silently truncating every multi-frame chunk
+/// into a short range that then fails its chunk hash for no discoverable reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_module_range_streams_the_exact_window() {
+    let (descriptor, blob) = module_fixture(2, 256);
+    // Frames deliberately narrower than the requested range, so a one-frame read is caught.
+    let server =
+        spawn_module_server(identity_key("srv/modrange"), descriptor, blob.clone(), 100).await;
+    let client_node = Arc::new(NodeCert::generate_signed(&identity_key("cli/modrange")).unwrap());
+    let target = PeerTarget::with_addr(server.peer_id, server.addr, "DIG_TESTNET");
+    let mut peer = DigPeer::connect(&target, &client_node)
+        .await
+        .expect("connect");
+
+    let mut stream = peer
+        .fetch_module_range(&FetchModuleRangeParams {
+            store_id: "aa".repeat(32),
+            root: "bb".repeat(32),
+            offset: Some(256),
+            length: 256,
+        })
+        .await
+        .expect("fetchModuleRange stream");
+
+    let mut got = Vec::new();
+    loop {
+        let frame = RangeFrame::decode(&mut stream)
+            .await
+            .expect("frame decodes")
+            .expect("the stream did not end mid-range");
+        got.extend_from_slice(&frame.bytes);
+        if frame.complete {
+            break;
+        }
+    }
+    assert_eq!(got, blob[256..512], "the exact requested window arrived");
     peer.disconnect().await;
 }
