@@ -453,17 +453,20 @@ async fn spawn_module_server(
                     let mut written = 0usize;
                     while written < window.len() {
                         let take = frame_size.min(window.len() - written);
-                        let frame = RangeFrame {
-                            offset: (start + written) as u64,
-                            length: take as u64,
-                            bytes: window[written..written + take].to_vec(),
-                            complete: written + take == window.len(),
-                            total_length: (written == 0).then_some(blob.len() as u64),
-                            chunk_lens: None,
-                            chunk_index: None,
-                            inclusion_proof: None,
-                            root: None,
-                        };
+                        // A MODULE frame carries no resource identity. `dig.fetchModuleRange` streams a
+                        // module blob, which has no generation `root`, no chunk layout and hence no
+                        // `chunk_count` — and dig-nat 0.13 reaches `total_length` only through
+                        // `with_identity(root, total_length, chunk_count)`, which would mean fabricating
+                        // a root that a reader's wrong-generation check would then compare against. The
+                        // previous fixture set `total_length` on the first frame only, mirroring a
+                        // "(first frame only)" rule that is no longer how identity works; nothing reads
+                        // it on this path (`fetch_module_range` ignores it, no assertion covers it), so
+                        // it is dropped rather than faked.
+                        let frame = RangeFrame::data(
+                            (start + written) as u64,
+                            window[written..written + take].to_vec(),
+                        )
+                        .with_complete(written + take == window.len());
                         write_framed(&mut stream, &serde_json::to_vec(&frame).unwrap())
                             .await
                             .expect("write module frame");
