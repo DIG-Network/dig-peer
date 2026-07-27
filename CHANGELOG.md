@@ -4,10 +4,10 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
-## [0.7.0] - 2026-07-26
+## [0.7.0] - 2026-07-27
 
 ### Chores
-- **deps:** Bump dig-nat 0.14 — release 0.7.0 (cascade #1668) (#7)
+- **deps:** Bump dig-nat 0.14 — release 0.7.0 (#1668 step 1.5) (#7)
 
 ## [0.6.0] - 2026-07-26
 
