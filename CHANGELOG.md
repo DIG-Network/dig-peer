@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.8.0] - 2026-07-31
+
+### Bug Fixes
+- **error:** DigPeerError::Codec carries SafeText and stops quoting the peer (#1674) (#8)
+
 ## [0.7.0] - 2026-07-27
 
 ### Chores
