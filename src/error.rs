@@ -6,7 +6,7 @@
 //! *seal* (the §5.4 end-to-end encryption could not be applied or verified — always fail-closed),
 //! and *state* (the operation is invalid for the connection's current lifecycle state).
 
-use dig_nat::NatError;
+use dig_nat::{NatError, SafeText};
 use dig_rpc_protocol::RpcError;
 
 /// The result type for every [`DigPeer`](crate::DigPeer) operation.
@@ -73,10 +73,27 @@ pub enum DigPeerError {
 
     /// A response body could not be (de)serialized into the expected typed shape.
     #[error("could not (de)serialize an RPC payload: {0}")]
-    Codec(String),
+    Codec(SafeText),
 
     /// The operation is invalid for the connection's current lifecycle state (e.g. an RPC after
     /// [`disconnect`](crate::DigPeer::disconnect)).
     #[error("operation invalid in state {0:?}")]
     InvalidState(crate::state::PeerState),
+}
+
+impl DigPeerError {
+    /// A codec failure describing a `serde_json` error on PEER-SUPPLIED bytes, without quoting them.
+    ///
+    /// `serde_json`'s own message embeds the offending value verbatim, and every byte this crate
+    /// decodes came from a remote node — so relaying that message put text of the peer's choosing
+    /// into the caller's diagnostics. The category and position are kept, which is the part that
+    /// actually helps a developer; the quotation is dropped.
+    pub fn codec_from_json(error: &serde_json::Error) -> Self {
+        DigPeerError::Codec(SafeText::describing_json_error(error))
+    }
+
+    /// A codec failure described by one of THIS crate's own literals.
+    pub fn codec(message: &'static str) -> Self {
+        DigPeerError::Codec(SafeText::from_static(message))
+    }
 }

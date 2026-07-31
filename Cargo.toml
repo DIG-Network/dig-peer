@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -40,7 +40,7 @@ categories = ["network-programming", "api-bindings"]
 # Carried forward from 0.13: dig-peer's production code only ever FORWARDS the mux wire types (it
 # takes `&RangeRequest`, hands back a `PeerStream`) and never builds one, so dig-nat's
 # `#[non_exhaustive]` + fallible `encode()` reach only the loopback test server.
-dig-nat = { version = "0.14" }
+dig-nat = { version = "0.15" }
 # The §5.4/#1075 recipient-seal: seal_message/open_message (DHKEM-over-G1 + BLS-G2 signature +
 # anti-replay). DigPeer applies it per directed RPC to the peer's captured BLS-G1 key; fail-closed.
 dig-message = { version = "0.5" }
@@ -91,3 +91,4 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = "warn"
+

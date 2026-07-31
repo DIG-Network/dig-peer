@@ -401,7 +401,7 @@ impl DigPeer {
         params: &P,
     ) -> Result<JsonRpcRequest<serde_json::Value>> {
         let params_value =
-            serde_json::to_value(params).map_err(|e| DigPeerError::Codec(e.to_string()))?;
+            serde_json::to_value(params).map_err(|e| DigPeerError::codec_from_json(&e))?;
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         Ok(JsonRpcRequest {
@@ -420,10 +420,11 @@ impl DigPeer {
             return Err(DigPeerError::Rpc(Box::new(error.clone())));
         }
         match response.as_result() {
-            Some(value) => serde_json::from_value(value.clone())
-                .map_err(|e| DigPeerError::Codec(e.to_string())),
-            None => Err(DigPeerError::Codec(
-                "response carried neither result nor error".into(),
+            Some(value) => {
+                serde_json::from_value(value.clone()).map_err(|e| DigPeerError::codec_from_json(&e))
+            }
+            None => Err(DigPeerError::codec(
+                "response carried neither result nor error",
             )),
         }
     }

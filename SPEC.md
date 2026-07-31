@@ -85,6 +85,15 @@ A JSON-RPC error envelope MUST map to `DigPeerError::Rpc` carrying the peer's `R
 body that is neither `result` nor `error` MUST be a `DigPeerError::Codec` failure, never a silent
 success.
 
+**A decode failure MUST NOT quote the decoded bytes back (NORMATIVE, #1674).** Every byte this crate
+decodes came from a remote node, and `serde_json`'s message embeds the offending value verbatim, so
+relaying it puts text of the peer's choosing into the caller's diagnostics — an injection channel and
+an echo of attacker-chosen content. `DigPeerError::Codec` therefore carries a `dig_nat::SafeText`,
+never a `String`, and a decode failure MUST be built with `DigPeerError::codec_from_json`, which
+states the failure category (syntax / data / EOF) and its line and column and includes none of the
+input. A rendered `DigPeerError` MUST NOT contain a control or bidirectional-formatting character of
+remote origin.
+
 ### 3.4 Raw-stream escape hatch (`open_stream`, unsealed)
 
 `DigPeer::open_stream()` MUST open ONE fresh multiplexed logical stream over the
