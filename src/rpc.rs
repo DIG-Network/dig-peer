@@ -19,6 +19,7 @@ use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::{DigPeerError, Result};
+use dig_nat::SafeText;
 
 /// Maximum length-prefixed body dig-peer will read — guards against a hostile length prefix. Matches
 /// dig-nat's control-frame bound (64 KiB) for small control/RPC messages.
@@ -27,10 +28,13 @@ pub const MAX_BODY: usize = 64 * 1024;
 /// Write a length-prefixed body (`u32` big-endian length + bytes) to `w`.
 pub async fn write_framed<W: AsyncWrite + Unpin>(w: &mut W, body: &[u8]) -> Result<()> {
     if body.len() > MAX_BODY {
-        return Err(DigPeerError::Codec(format!(
+        // Our own sentence with a LENGTH interpolated. `from_untrusted` is still the honest door —
+        // the length is ours here, but a decimal integer cannot carry a control character either
+        // way, so naming the provenance costs nothing and keeps one rule for the whole file.
+        return Err(DigPeerError::Codec(SafeText::from_untrusted(format!(
             "outbound body {} exceeds the {MAX_BODY}-byte bound",
             body.len()
-        )));
+        ))));
     }
     w.write_all(&(body.len() as u32).to_be_bytes()).await?;
     w.write_all(body).await?;
@@ -44,9 +48,11 @@ pub async fn read_framed<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>> {
     r.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_BODY {
-        return Err(DigPeerError::Codec(format!(
+        // `len` is PEER-CHOSEN — a declared length from the wire. It is an integer, so it cannot
+        // inject; it goes through the untrusted door anyway so the provenance is visible here.
+        return Err(DigPeerError::Codec(SafeText::from_untrusted(format!(
             "inbound body length {len} exceeds the {MAX_BODY}-byte bound"
-        )));
+        ))));
     }
     let mut body = vec![0u8; len];
     r.read_exact(&mut body).await?;
@@ -55,12 +61,12 @@ pub async fn read_framed<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>> {
 
 /// Serialize a value to a JSON body for the wire.
 pub fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|e| DigPeerError::Codec(e.to_string()))
+    serde_json::to_vec(value).map_err(|e| DigPeerError::codec_from_json(&e))
 }
 
 /// Deserialize a JSON body from the wire into a typed value.
 pub fn from_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|e| DigPeerError::Codec(e.to_string()))
+    serde_json::from_slice(bytes).map_err(|e| DigPeerError::codec_from_json(&e))
 }
 
 #[cfg(test)]
