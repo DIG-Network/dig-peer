@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.9.0] - 2026-08-02
+
+### Chores
+- **deps:** Dig-nat 0.18 — pick up RLY-009 and the non_exhaustive wire (#9)
+
 ## [0.8.0] - 2026-07-31
 
 ### Bug Fixes
