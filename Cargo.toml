@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -48,20 +48,23 @@ dig-message = { version = "0.5" }
 # request/response types, and the error taxonomy. DigPeer exposes typed clients for these — never a
 # hand-rolled wire type.
 #
-# `0.7` is a requirement bump with no code change here. A `0.x` MINOR is semver-INCOMPATIBLE, so
-# staying at `"0.6"` would resolve a SECOND dig-rpc-protocol copy for any consumer that reaches the
+# `0.10` is a requirement bump with no code change here. A `0.x` MINOR is semver-INCOMPATIBLE, so
+# staying at `"0.7"` would resolve a SECOND dig-rpc-protocol copy for any consumer that reaches the
 # crate both directly and transitively through dig-peer, and the shared wire types would arrive from
-# a different copy than the caller's (E0308). Requiring `0.7` collapses that to one.
+# a different copy than the caller's (E0308). That is exactly the `expected FetchModuleRangeParams,
+# found a different FetchModuleRangeParams` failure dig-node hit; requiring `0.10` collapses it to one.
 #
-# 0.7.0's only change over 0.6.0 is one added `ErrorCode` variant. `ErrorCode` is `#[non_exhaustive]`,
-# so dig-peer cannot hold an exhaustive match on it — and it does not: `DigPeerError::Rpc` forwards
-# `RpcError` verbatim and never enumerates codes outside a test import.
+# 0.8.0 carries the getAvailability redirect hop budget, 0.9.0 the four recursive-ask wire additions,
+# and 0.10.x moves `ContentMissInconclusive` to -32017 while absorbing five previously
+# consumer-held error codes. dig-peer references none of those integers: `DigPeerError::Rpc` forwards
+# `RpcError` verbatim and never enumerates codes outside a test import, and `ErrorCode` is
+# `#[non_exhaustive]`, so no exhaustive match here can break on a new variant.
 #
 # Carried forward from 0.6: `RangeFrame` + `FetchRangeParams` are `#[non_exhaustive]` (mirroring
-# dig-nat 0.13) and neither is constructed here — the module-leg fixture builds `dig_nat::RangeFrame`.
+# dig-nat 0.13) and neither is constructed here - the module-leg fixture builds `dig_nat::RangeFrame`.
 # The dig-rpc-protocol types this crate DOES construct (`ModuleInfo`, `GetModuleInfoParams`,
-# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.7.0 — verified against the released crate.
-dig-rpc-protocol = { version = "0.7" }
+# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.10.1 - verified against the released crate.
+dig-rpc-protocol = { version = "0.10" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
 # import and so DigPeer can read the local BLS identity for sealing.
