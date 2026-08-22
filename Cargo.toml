@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -29,21 +29,27 @@ categories = ["network-programming", "api-bindings"]
 # The transport: one connect() over the full direct→relay NAT-traversal ladder, returning a verified
 # mTLS PeerConnection. dig-peer wraps this — it never hand-rolls dialing, mTLS, or peer_id pinning.
 #
-# `0.14` (cascade #1668) is purely ADDITIVE over 0.13 (chunk-lens paging: `ChunkLensAssembler`,
-# `ChunkLensError`, `MAX_RESOURCE_CHUNK_COUNT`, `RangeFrame::split_chunk_lens_pages`) — dig-peer needs
-# no code migration for it. The bump exists because a `0.x` MINOR is semver-INCOMPATIBLE: `"0.13"`
-# means `>=0.13.0, <0.14.0`, so a consumer that reaches dig-nat BOTH directly and transitively through
-# dig-peer (dig-download does) would resolve TWO dig-nat copies while this requirement stayed at
-# `0.13`, and the `RangeRequest` in `fetch_range(&RangeRequest)` would arrive from a different copy
-# than the caller's (E0308). Requiring `0.14` here is what collapses that to one.
+# `0.20` is the chia-0.36 cascade rank-two release: it is dig-nat 0.19 rebuilt on `dig-tls 0.4`
+# (chia-bls 0.36.1). Requiring it here is not optional — a `0.x` MINOR is semver-INCOMPATIBLE, so a
+# stale `"0.18"` would resolve a SECOND dig-nat, and with it a second dig-tls and a second chia-bls,
+# putting a 0.26 `SecretKey` on the same public signature as a 0.36 `Bytes32`. That is precisely the
+# internal split `dig-gossip 0.29.0` shipped. See the chia-line note below the `chia-*` deps.
+#
+# The requirement was ALREADY two behind (`0.18` against a released 0.19.0) before this cascade; that
+# pre-existing drift is corrected here as well.
 #
 # Carried forward from 0.13: dig-peer's production code only ever FORWARDS the mux wire types (it
 # takes `&RangeRequest`, hands back a `PeerStream`) and never builds one, so dig-nat's
 # `#[non_exhaustive]` + fallible `encode()` reach only the loopback test server.
-dig-nat = { version = "0.18" }
+dig-nat = { version = "0.20" }
 # The §5.4/#1075 recipient-seal: seal_message/open_message (DHKEM-over-G1 + BLS-G2 signature +
 # anti-replay). DigPeer applies it per directed RPC to the peer's captured BLS-G1 key; fail-closed.
-dig-message = { version = "0.5" }
+#
+# `0.6` is an INDEPENDENT second anchor on the chia line, not a follower of the dig-tls bump: 0.5.x
+# is built on chia-bls/chia-protocol 0.26, so a dig-tls-only uplift would leave this crate split.
+# 0.6 carries no API change dig-peer must migrate — `SealParams`, `seal_message`, `open_message`,
+# `ReplayGuard` and `DigMessageEnvelope` are unchanged in the shapes used here.
+dig-message = { version = "0.6" }
 # The canonical RPC wire contract: the JSON-RPC 2.0 envelope, the method catalogue, the typed
 # request/response types, and the error taxonomy. DigPeer exposes typed clients for these — never a
 # hand-rolled wire type.
@@ -68,12 +74,28 @@ dig-rpc-protocol = { version = "0.10" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
 # import and so DigPeer can read the local BLS identity for sealing.
-dig-tls = { version = "0.3" }
+dig-tls = { version = "0.4" }
 
 # Byte-deterministic Chia-Streamable DID/G1 wire types (Bytes32 identity id) the seal uses, plus the
 # Streamable to_bytes/from_bytes trait for the sealed dig-message envelope.
-chia-protocol = "0.26"
-chia-traits = "0.26"
+#
+# THE CHIA LINE IS ONE LINE, AND IT IS LOAD-BEARING. Chia types cross dig-peer's PUBLIC API from two
+# directions at once: `SealingIdentity::new` takes a `chia-bls` `SecretKey` (reached via
+# `dig_tls::bls`), while `seal_request` returns and `open_response` accepts a `chia-protocol`
+# `Bytes32` (reached directly, here). Both are re-exported at the crate root. If those two arrive
+# from different chia minors the crate is internally split, which is how `dig-gossip 0.29.0` shipped
+# a 0.26 `SecretKey` beside a 0.36.1 `Bytes32` in a single signature.
+#
+# So `dig-nat`, `dig-message`, `dig-tls` and these two declarations MOVE TOGETHER OR NOT AT ALL. The
+# split cannot silently recur: `SealingIdentity` hands `&self.secret_key` and these `Bytes32` values
+# straight into dig-message's `SealParams`, so a mismatched line is an E0308 at build time rather
+# than a wire-compatibility surprise at run time.
+#
+# `cargo tree -d` is NOT the check. `clvmr` pins its own older `chia-bls`/`chia-traits` for CLVM
+# evaluation, so a duplicate is reported for any correct resolution; that copy never reaches a
+# dig-peer signature. Trace each duplicate to its root instead of trusting the count.
+chia-protocol = "0.36"
+chia-traits = "0.36"
 
 # Async runtime + stream I/O for the RPC framing over the mux.
 tokio = { version = "1", features = ["io-util", "rt", "macros", "time", "sync"] }

@@ -280,6 +280,132 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------------------------------
+    // GOLDEN WIRE VECTORS
+    //
+    // These pin the exact bytes dig-peer puts on the wire and the exact BLS-G1 key it derives from
+    // a fixed seed. They exist so a chia-crate uplift (chia-bls / chia-protocol / chia-traits) can
+    // be PROVEN byte-compatible with peers already deployed on the previous line, rather than
+    // assumed. Blessed on the chia-0.26 line; they MUST NOT change when the line moves.
+    //
+    // A changed byte here is a compatibility break with deployed peers, not a migration detail.
+    // ---------------------------------------------------------------------------------------
+
+    /// Two NON-UNIFORM, NON-CANCELLING peer ids for the vectors.
+    ///
+    /// A uniform pair is blind here: `correlation_from` XORs `sender[i]` against
+    /// `recipient[i].rotate_left(3)`, and e.g. `0x11 ^ 0x22.rotate_left(3) == 0` collapses the whole
+    /// digest to zeros — a fixture that cannot show a derivation change. These vary per byte and
+    /// exercise the `i % 24` fold, where bytes 8..=15 receive two contributions and 16..=31 one.
+    fn vector_sender() -> PeerId {
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = (i as u8).wrapping_mul(7).wrapping_add(0x13);
+        }
+        PeerId::from_bytes(b)
+    }
+
+    fn vector_recipient() -> PeerId {
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = (i as u8).wrapping_mul(11).wrapping_add(0xa7);
+        }
+        PeerId::from_bytes(b)
+    }
+
+    /// The one fixed seed every vector below derives from. Never a production key path.
+    const VECTOR_SEED: [u8; 32] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+        0x1e, 0x1f,
+    ];
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// **Proves:** `SecretKey::from_seed` -> compressed BLS-G1 public key is byte-identical to the
+    /// value the chia-0.26 line produced. This is the cryptographic anchor of the peer identity the
+    /// mTLS binding commits to, so a change here silently re-identifies every node.
+    /// **Catches:** a chia-bls uplift that alters EIP-2333 key derivation or G1 compression.
+    #[test]
+    fn vector_bls_g1_public_key_from_fixed_seed() {
+        let pk = public_key_bytes(&SecretKey::from_seed(&VECTOR_SEED));
+        assert_eq!(hex(&pk), "8f336467f057b373bb3c43815a10ec131119d1bf50c14fa3f9ad86c0ec074f920f936a5315a8365a37fee0afa34c32c6", "BLS-G1 derivation drifted");
+    }
+
+    /// **Proves:** the cleartext `correlation_id` routing field is derived byte-identically. Peers
+    /// match responses to requests on this value, so drift misroutes every in-flight RPC.
+    /// **Catches:** a `Bytes32` construction or byte-order change across the uplift.
+    #[test]
+    fn vector_correlation_id_for_a_fixed_directed_pair() {
+        let mut id = SealingIdentity::new(SecretKey::from_seed(&VECTOR_SEED), 7);
+        let recipient_pub = public_key_bytes(&SecretKey::from_seed(&[0x5au8; 32]));
+        let (_wire, correlation) = id
+            .seal_request(
+                vector_sender(),
+                vector_recipient(),
+                &recipient_pub,
+                b"vector-payload",
+            )
+            .expect("seal succeeds");
+        assert_eq!(
+            hex(correlation.as_ref()),
+            "0000000000000001e8982b38b82918e8b402f1613edf7f1e3999fa5b83d26191",
+            "correlation id derivation drifted"
+        );
+    }
+
+    /// **Proves:** the sealed envelope's Chia-Streamable HEADER — version, message type, flags,
+    /// correlation id, sender/recipient `Bytes32` DIDs, key epoch — serializes to the exact bytes a
+    /// deployed peer expects. The sealed body carries an ephemeral KEM share and a timestamp and is
+    /// therefore not byte-stable; the header is, and it is the part a peer parses to route.
+    /// **Catches:** a `chia-traits` Streamable encoding change (field order, integer width,
+    /// `Option` tagging) that would make a 0.36-built peer unreadable to a 0.26-built one.
+    #[test]
+    fn vector_sealed_envelope_header_bytes() {
+        let mut id = SealingIdentity::new(SecretKey::from_seed(&VECTOR_SEED), 7);
+        let recipient_pub = public_key_bytes(&SecretKey::from_seed(&[0x5au8; 32]));
+        let (wire, _correlation) = id
+            .seal_request(
+                vector_sender(),
+                vector_recipient(),
+                &recipient_pub,
+                b"vector-payload",
+            )
+            .expect("seal succeeds");
+        let envelope = DigMessageEnvelope::from_bytes(&wire).expect("envelope parses");
+        let header = envelope.header_bytes().expect("header serializes");
+        assert_eq!(hex(&header), "0100005250050000000000000001e8982b38b82918e8b402f1613edf7f1e3999fa5b83d26191131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5eca7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0dbe6f1fc0000000700", "envelope header encoding drifted");
+    }
+
+    /// **Proves:** the transport `peer_id` -> `Bytes32` DID mapping is the identity mapping and its
+    /// Streamable encoding is the raw 32 bytes, unprefixed and unreordered.
+    /// **Catches:** a `chia-protocol` `Bytes32` representation change that would rewrite every DID
+    /// field on the wire.
+    #[test]
+    fn vector_peer_id_to_bytes32_streamable_encoding() {
+        let mut id = SealingIdentity::new(SecretKey::from_seed(&VECTOR_SEED), 7);
+        let recipient_pub = public_key_bytes(&SecretKey::from_seed(&[0x5au8; 32]));
+        let (wire, _c) = id
+            .seal_request(
+                vector_sender(),
+                vector_recipient(),
+                &recipient_pub,
+                b"vector-payload",
+            )
+            .expect("seal succeeds");
+        let envelope = DigMessageEnvelope::from_bytes(&wire).expect("envelope parses");
+        assert_eq!(
+            hex(&chia_traits::Streamable::to_bytes(&envelope.sender).unwrap()),
+            "131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ec"
+        );
+        assert_eq!(
+            hex(&chia_traits::Streamable::to_bytes(&envelope.recipient).unwrap()),
+            "a7b2bdc8d3dee9f4ff0a15202b36414c57626d78838e99a4afbac5d0dbe6f1fc"
+        );
+    }
+
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|w| w == needle)
     }
