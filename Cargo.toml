@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -41,7 +41,17 @@ categories = ["network-programming", "api-bindings"]
 # Carried forward from 0.13: dig-peer's production code only ever FORWARDS the mux wire types (it
 # takes `&RangeRequest`, hands back a `PeerStream`) and never builds one, so dig-nat's
 # `#[non_exhaustive]` + fallible `encode()` reach only the loopback test server.
-dig-nat = { version = "0.20" }
+#
+# `0.20` -> `0.21` (relay cascade, dig_ecosystem#3159): dig-nat 0.21 makes the relayed-dial duplicate
+# guard require a LIVE circuit with a 30s idle window, so a stale circuit can no longer suppress a
+# fresh dial. That fix is on THIS crate's critical path — `DigPeer::connect` drives dig-nat's full
+# direct->relay ladder, so the relayed rung this crate depends on was the one being refused. dig-nat
+# 0.20..0.21 changes NO public API (its diff is `src/relay.rs` internals, SPEC.md and the manifest),
+# so nothing here migrates; the bump is mandatory for the `0.x`-MINOR reason above. It carries
+# `dig-constants ^0.11.1` / `dig-identity ^0.7` forward transitively; this crate declares neither, and
+# neither disturbs the ONE chia line below — `dig-tls` stays at `0.4` and chia-protocol/traits at
+# `0.36`.
+dig-nat = { version = "0.21" }
 # The §5.4/#1075 recipient-seal: seal_message/open_message (DHKEM-over-G1 + BLS-G2 signature +
 # anti-replay). DigPeer applies it per directed RPC to the peer's captured BLS-G1 key; fail-closed.
 #
@@ -49,7 +59,14 @@ dig-nat = { version = "0.20" }
 # is built on chia-bls/chia-protocol 0.26, so a dig-tls-only uplift would leave this crate split.
 # 0.6 carries no API change dig-peer must migrate — `SealParams`, `seal_message`, `open_message`,
 # `ReplayGuard` and `DigMessageEnvelope` are unchanged in the shapes used here.
-dig-message = { version = "0.6" }
+#
+# `0.6` -> `0.7` MOVES WITH dig-nat 0.21, and it is mandatory rather than tidy: dig-nat 0.21 requires
+# `dig-identity ^0.7` while dig-message 0.6 requires `^0.6`. This crate reaches dig-identity through
+# BOTH edges, so a stale `"0.6"` here resolves TWO dig-identity copies and with them two
+# `chia-sdk-utils` lines — measured directly in this crate's lock before the bump. dig-message 0.7.0
+# is the manifest-only identity uplift; its sealed-envelope KAT vectors pass unchanged, so
+# `SealParams` / `seal_message` / `open_message` are byte-identical.
+dig-message = { version = "0.7" }
 # The canonical RPC wire contract: the JSON-RPC 2.0 envelope, the method catalogue, the typed
 # request/response types, and the error taxonomy. DigPeer exposes typed clients for these — never a
 # hand-rolled wire type.
