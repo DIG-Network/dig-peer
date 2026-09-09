@@ -86,7 +86,10 @@ dig-message = { version = "0.7" }
 # Carried forward from 0.6: `RangeFrame` + `FetchRangeParams` are `#[non_exhaustive]` (mirroring
 # dig-nat 0.13) and neither is constructed here - the module-leg fixture builds `dig_nat::RangeFrame`.
 # The dig-rpc-protocol types this crate DOES construct (`ModuleInfo`, `GetModuleInfoParams`,
-# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.10.1 - verified against the released crate.
+# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.11.0 - re-verified against the struct
+# definitions in the published 0.11.0 source (src/types.rs), and confirmed by this crate's own
+# green `cargo build --all-features` on 0.11.0, which would fail to compile a plain struct
+# literal against any of the three if the attribute had been added.
 dig-rpc-protocol = { version = "0.11" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
