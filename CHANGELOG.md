@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org) and
 ## [0.15.0] - 2026-09-13
 
 ### Chores
-- **deps:** Bump dig-rpc-protocol to 0.12 (#3269)
+- **deps:** Bump dig-rpc-protocol to 0.12, release 0.15.0 (#17)
 
 ## [0.14.0] - 2026-09-09
 
