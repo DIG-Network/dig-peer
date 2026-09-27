@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -86,12 +86,34 @@ dig-message = { version = "0.7" }
 # Carried forward from 0.6: `RangeFrame` + `FetchRangeParams` are `#[non_exhaustive]` (mirroring
 # dig-nat 0.13) and neither is constructed here - the module-leg fixture builds `dig_nat::RangeFrame`.
 # The dig-rpc-protocol types this crate DOES construct (`ModuleInfo`, `GetModuleInfoParams`,
-# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.12.0 - confirmed by this crate's own green
-# `cargo build --all-features` on 0.12.0, which would fail to compile a plain struct literal
+# `RelayStatus`) are still NOT `#[non_exhaustive]` in 0.14.0 - confirmed by this crate's own green
+# `cargo build --all-features` on 0.14.0, which would fail to compile a plain struct literal
 # against any of the three if the attribute had been added. 0.12.0's reshape of the reward-facing
 # result types (`Half<T>`, `PayeeSubject`, `PayeeClaimStatus`) touches none of dig-peer's imports;
 # this crate is peer-transport only and never references `Tier::Control` reward types.
-dig-rpc-protocol = { version = "0.12" }
+#
+# `0.12` -> `0.14` IN ONE STEP (dig_ecosystem#3246). 0.13.0 carries the claim-loop anti-silence
+# surface on `PayeeClaimStatus` and a compiler-checked `Method::ALL`; 0.14.0 adds a REQUIRED
+# chain-view anchor -- `chain_peak_height` + `chain_peak_timestamp`, both plain `u64`, no `Option`,
+# no serde default -- to `GetRewardDistributorResult` and `ListRewardDistributorCommitmentsResult`.
+# That break is deliberate: `entry_set_stale` is computed on the CHAIN clock but was stamped only
+# with the WALL clock, so a stalled chain source froze it at `false` under a fresh-looking
+# `observed_at`. Making the anchor required is the mechanism that forces a producer to fill it BY
+# NAME; an `Option` there would invent an "I could not look" arm no producer can reach (a responder
+# with no peak must answer a JSON-RPC error instead).
+#
+# dig-peer is unaffected by that break and holds no compensation to remove: it is peer-transport
+# only and references the reward surface nowhere -- `grep -rn 'entry_set_stale\|observed_at\|
+# chain_peak\|RewardDistributor' src/ tests/` is EMPTY, and the seven `Method::` uses above are
+# variant CONSTRUCTIONS, never an exhaustive `match`, so the 0.13.0 catalogue additions cannot
+# break an arm here either.
+#
+# The bump is nonetheless mandatory rather than tidy, and it is what unblocks the cascade: a 0.x
+# MINOR is semver-INCOMPATIBLE, so while dig-peer requires `^0.12` any consumer that also requires
+# `^0.14` resolves a SECOND dig-rpc-protocol copy and gets two `ModuleInfo` shapes either side of
+# the peer seam (E0308) -- the same failure the 0.7 -> 0.10 bump above was written to end. dig-node
+# cannot adopt 0.14.0 until this requirement moves.
+dig-rpc-protocol = { version = "0.14" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
 # import and so DigPeer can read the local BLS identity for sealing.
