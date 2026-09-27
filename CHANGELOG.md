@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org) and
 ## [0.16.0] - 2026-09-27
 
 ### Chores
-- **deps:** Adopt dig-rpc-protocol 0.14 in one step, release 0.16.0 (#3246)
+- **deps:** Adopt dig-rpc-protocol 0.14 in one step, release 0.16.0 (#18)
 
 ## [0.15.0] - 2026-09-13
 
