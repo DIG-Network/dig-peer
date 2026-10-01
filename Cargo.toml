@@ -15,7 +15,7 @@
 # dig-nat (L10), dig-message (L10), dig-rpc-protocol (L00), dig-tls (L00), dig-ip (L00).
 [package]
 name = "dig-peer"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 rust-version = "1.81.0"
 license = "Apache-2.0 OR MIT"
@@ -113,7 +113,9 @@ dig-message = { version = "0.7" }
 # `^0.14` resolves a SECOND dig-rpc-protocol copy and gets two `ModuleInfo` shapes either side of
 # the peer seam (E0308) -- the same failure the 0.7 -> 0.10 bump above was written to end. dig-node
 # cannot adopt 0.14.0 until this requirement moves.
-dig-rpc-protocol = { version = "0.14" }
+#
+# `0.14` -> `0.15` (dig_ecosystem#3442): `RewardDistributor.recoverable_base_units` becomes `Option<u64>`.
+dig-rpc-protocol = { version = "0.15" }
 # The mTLS identity: the per-peer NodeCert the caller presents and dig-nat pins the peer_id against.
 # Re-exported from dig-nat, depended on directly so callers construct a NodeCert without a dig-nat
 # import and so DigPeer can read the local BLS identity for sealing.
